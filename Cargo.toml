@@ -10,4 +10,5 @@ edition = "2018"
 [dependencies]
 ansi_term = "0.12.1"
 clap = "2.33.3"
+num_enum = "0.5.1"
  

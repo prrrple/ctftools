@@ -1,5 +1,5 @@
 use ansi_term::Color;
-use ansi_term::Colour::{Cyan, Green, Purple};
+use ansi_term::Colour::{Cyan, Green, Purple, Red};
 use clap::{App, Arg};
 use ctftools::readers;
 use std::fs;
@@ -40,7 +40,7 @@ fn main() {
                 .help("Sets the level of verbosity"),
         );
 
-    if env::args_os().len() == 0 {
+    if env::args_os().len() < 2 {
         let _ = app.print_help();
         return;
     }
@@ -49,8 +49,17 @@ fn main() {
 
     let input = matches.value_of("input").unwrap();
 
-    println!("Dumping {}...", Color::Cyan.paint(input));
-    let bytes = fs::read(input).unwrap();
+    print!("Dumping {}... ", Color::Cyan.paint(input));
+    let bytes = match fs::read(input) {
+        Ok(b) => {
+            println!("{} byte(s)", b.len());
+            b
+        }
+        Err(e) => {
+            println!("{}\n{}", Red.paint("Failed!"), e);
+            return;
+        }
+    };
 
     let arg_types: Vec<&str> = matches.values_of("type").unwrap().collect();
     let types = if arg_types.contains(&"all") {
@@ -63,7 +72,10 @@ fn main() {
         match readers::get_reader(reader_type) {
             None => println!("Unknown reader {}... Skipping!", reader_type),
             Some(read) => {
-                println!("Trying {} reader...", Cyan.paint(reader_type));
+                println!(
+                    "\n===[ {} ]=======================================\n",
+                    Cyan.paint(format!("{:<8}", reader_type.to_uppercase()))
+                );
                 let result = panic::catch_unwind(|| match read(&bytes) {
                     Ok((start, end)) => println!(
                         "{} {} to {}!",

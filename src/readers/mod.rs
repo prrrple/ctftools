@@ -1,5 +1,5 @@
-use crate::readers::Format::{Signed, Unsigned};
 use ansi_term::Colour::{Blue, Cyan, Green, Yellow};
+use ansi_term::Style;
 use std;
 use std::convert::TryInto;
 use std::error::Error;
@@ -12,13 +12,6 @@ pub const ALL: &[&str] = &["bmp"];
 
 mod bmp;
 
-enum Format {
-    Signed,
-    Unsigned,
-    Chars,
-    Enum,
-}
-
 struct Field {
     data: Box<[u8]>,
     value: u64,
@@ -28,88 +21,120 @@ struct Field {
 pub struct FieldDef {
     size: usize,
     name: &'static str,
-    format: Format,
-    items: &'static [&'static str],
+    style: &'static ansi_term::Style,
+    dump: fn(u64) -> String,
 }
 
+fn dump_signed(value: u64) -> String {
+    i64::from_ne_bytes(value.to_ne_bytes()).to_string()
+}
+
+fn dump_unsigned(value: u64) -> String {
+    value.to_string()
+}
+
+fn dump_chars(value: u64) -> String {
+    String::from_utf8(
+        Vec::from(value.to_le_bytes())
+            .into_iter()
+            .take_while(|b| *b > 0)
+            .collect(),
+    )
+    .unwrap_or(String::from("?"))
+}
+
+pub static DEFAULT_STYLE: Style = Style {
+    foreground: None,
+    background: None,
+    is_bold: false,
+    is_dimmed: false,
+    is_italic: false,
+    is_underline: false,
+    is_blink: false,
+    is_reverse: false,
+    is_hidden: false,
+    is_strikethrough: false,
+};
+pub static ENUM_STYLE: Style = Style {
+    foreground: Some(Blue),
+    ..DEFAULT_STYLE
+};
+pub static CHARS_STYLE: Style = Style {
+    foreground: Some(Yellow),
+    ..DEFAULT_STYLE
+};
+pub static INT_STYLE: Style = Style {
+    foreground: Some(Cyan),
+    ..DEFAULT_STYLE
+};
+
 impl FieldDef {
-    fn new(size: usize, name: &'static str, format: Format) -> Self {
+    fn new(
+        name: &'static str,
+        size: usize,
+        style: &'static Style,
+        dump: fn(u64) -> String,
+    ) -> Self {
         FieldDef {
             size,
             name,
-            format,
-            items: &[] as &[&str],
+            style,
+            dump,
         }
     }
 
     fn chars(name: &'static str, size: usize) -> Self {
-        Self::new(size, name, Format::Chars)
+        Self::new(name, size, &CHARS_STYLE, dump_chars)
     }
 
-    fn new_enum(name: &'static str, size: usize, items: &'static [&'static str]) -> Self {
-        FieldDef {
-            size,
-            name,
-            format: Format::Enum,
-            items,
-        }
+    fn signed(name: &'static str, size: usize) -> Self {
+        Self::new(name, size, &INT_STYLE, dump_signed)
+    }
+
+    fn unsigned(name: &'static str, size: usize) -> Self {
+        Self::new(name, size, &INT_STYLE, dump_unsigned)
     }
 
     pub fn u64(name: &'static str) -> Self {
-        Self::new(8, name, Unsigned)
+        Self::unsigned(name, 8)
     }
     pub fn u32(name: &'static str) -> Self {
-        Self::new(4, name, Unsigned)
+        Self::unsigned(name, 4)
     }
     pub fn u16(name: &'static str) -> Self {
-        Self::new(2, name, Unsigned)
+        Self::unsigned(name, 2)
     }
     pub fn u8(name: &'static str) -> Self {
-        Self::new(1, name, Unsigned)
+        Self::unsigned(name, 1)
     }
 
     pub fn i64(name: &'static str) -> Self {
-        Self::new(8, name, Signed)
+        Self::signed(name, 8)
     }
     pub fn i32(name: &'static str) -> Self {
-        Self::new(4, name, Signed)
+        Self::signed(name, 4)
     }
     pub fn i16(name: &'static str) -> Self {
-        Self::new(2, name, Signed)
+        Self::signed(name, 2)
     }
     pub fn i8(name: &'static str) -> Self {
-        Self::new(1, name, Signed)
+        Self::signed(name, 1)
     }
 }
 
 impl Display for Field {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        let value = match self.def.format {
-            Format::Chars => Yellow.paint(format!(
-                "{:<12}",
-                String::from_utf8(self.data.to_vec()).unwrap_or(String::from("?"))
-            )),
-            Format::Enum => Blue.paint(format!(
-                "{:<12}",
-                self.def
-                    .items
-                    .get(usize::from(self.data[0]))
-                    .unwrap_or(&"?")
-            )),
-            _ => Cyan.paint(format!(
-                "{:<12}",
-                match self.def.format {
-                    Format::Unsigned => self.value.to_string(),
-                    _ => i64::from_ne_bytes(self.value.to_ne_bytes()).to_string(),
-                }
-            )),
-        };
+        let value = self
+            .def
+            .style
+            .paint(format!("{:<12}", (self.def.dump)(self.value)));
         let _ = write!(f, "{:<22}", value);
+
         for b in self.data.iter() {
             let _ = write!(f, " {:02x}", b);
         }
 
-        return Ok(());
+        Ok(())
     }
 }
 
@@ -141,6 +166,15 @@ impl Section {
         }
 
         Section { name, fields }
+    }
+
+    fn get(&self, name: &str) -> Option<&Field> {
+        for field in &self.fields {
+            if field.def.name == name {
+                return Some(&field);
+            }
+        }
+        None
     }
 }
 
